@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+          (request.auth.token.email == "freedommight87@gmail.com" && request.auth.token.email_verified == true)
+        );
+    }
+
+    // Domain Validators
+    function isValidInventoryItem(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.addedDate is string &&
+             data.cost is number && data.cost >= 0 &&
+             data.quantity is number && data.quantity > 0 &&
+             data.unit is string &&
+             data.isFinished is bool &&
+             data.uid is string;
+    }
+
+    function isValidGoal(data) {
+      return data.currentSavings is number && data.currentSavings >= 0 &&
+             data.targetPrice is number && data.targetPrice > 0 &&
+             data.downpaymentPercent is number && data.downpaymentPercent >= 0 && data.downpaymentPercent <= 100 &&
+             data.interestRate is number && data.interestRate >= 0 &&
+             data.uid is string;
+    }
+
+    match /inventory/{itemId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidInventoryItem(request.resource.data) && uidUnchanged();
+      allow update: if isAuthenticated() && isValidInventoryItem(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    match /goals/{goalId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidGoal(request.resource.data) && uidUnchanged();
+      allow update: if isAuthenticated() && isValidGoal(request.resource.data) && uidNotModified();
+      allow delete: if isDocOwner() || isAdmin();
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "entities": {
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "An item in the household inventory.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the item (e.g., Teff)" },
+        "addedDate": { "type": "string", "format": "date-time", "description": "When the item was added." },
+        "cost": { "type": "number", "description": "Cost in Birr." },
+        "quantity": { "type": "number", "description": "Initial quantity (e.g., 5 for 5kg)." },
+        "unit": { "type": "string", "description": "Unit (kg, liters, etc.)" },
+        "isFinished": { "type": "boolean", "description": "Whether the item is finished." },
+        "finishedDate": { "type": "string", "format": "date-time", "description": "When the item was finished." },
+        "uid": { "type": "string", "description": "User ID of the owner." }
+      },
+      "required": ["name", "addedDate", "cost", "quantity", "unit", "isFinished", "uid"]
+    },
+    "Goal": {
+      "title": "Savings Goal",
+      "description": "The user's home ownership goal.",
+      "type": "object",
+      "properties": {
+        "currentSavings": { "type": "number", "description": "Current savings in Birr." },
+        "targetPrice": { "type": "number", "description": "Target house/car price." },
+        "downpaymentPercent": { "type": "number", "description": "Target downpayment percentage (e.g., 25)." },
+        "interestRate": { "type": "number", "description": "Annual interest rate (e.g., 16)." },
+        "uid": { "type": "string", "description": "User ID of the owner." }
+      },
+      "required": ["currentSavings", "targetPrice", "downpaymentPercent", "interestRate", "uid"]
+    }
+  },
+  "firestore": {
+    "/inventory": { "schema": "InventoryItem", "description": "Collection of inventory items." },
+    "/goals": { "schema": "Goal", "description": "User goals." }
+  }
+}
