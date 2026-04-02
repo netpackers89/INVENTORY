@@ -23,7 +23,8 @@ import {
   GoogleAuthProvider, 
   onAuthStateChanged, 
   User,
-  signOut 
+  signOut,
+  signInAnonymously
 } from 'firebase/auth';
 import { db, auth } from './firebase';
 import { InventoryItem, Goal } from './types';
@@ -153,17 +154,27 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'frequency' | 'cost'>('frequency');
-  const [isFamilyMode, setIsFamilyMode] = useState(false);
+  const [isFamilyMode, setIsFamilyMode] = useState(true);
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
 
   // --- Auth ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
-      setIsAuthReady(true);
-      setIsLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUser(user);
+        setIsAuthReady(true);
+        setIsLoading(false);
+      } else {
+        try {
+          await signInAnonymously(auth);
+        } catch (error) {
+          console.error('Anonymous login error:', error);
+          setIsAuthReady(true);
+          setIsLoading(false);
+        }
+      }
     });
     return unsubscribe;
   }, []);
@@ -383,33 +394,6 @@ export default function App() {
     );
   }
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-6">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center"
-        >
-          <div className="w-20 h-20 bg-amber-500/10 rounded-3xl flex items-center justify-center mb-8 mx-auto">
-            <Home className="w-10 h-10 text-amber-500" />
-          </div>
-          <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">Home-to-Goal</h1>
-          <p className="text-zinc-400 mb-12 max-w-sm mx-auto leading-relaxed">
-            Track your household inventory, understand your spending, and reach your home ownership goal.
-          </p>
-          <button 
-            onClick={login}
-            className="w-full max-w-xs py-4 bg-amber-500 text-black font-bold rounded-2xl hover:bg-amber-400 transition-all active:scale-95 flex items-center justify-center gap-3"
-          >
-            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-            Sign in with Google
-          </button>
-        </motion.div>
-      </div>
-    );
-  }
-
   return (
     <ErrorBoundary>
       <div className="min-h-screen text-zinc-100 pb-32 font-sans selection:bg-amber-500/30 overflow-x-hidden">
@@ -453,9 +437,23 @@ export default function App() {
               </p>
             </div>
           </div>
-          <button onClick={logout} className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-zinc-500 hover:text-white transition-all hover:bg-red-500/10 hover:border-red-500/20">
-            <LogOut className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-3">
+            {user?.isAnonymous ? (
+              <button 
+                onClick={login}
+                className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+              >
+                Sync with Google
+              </button>
+            ) : (
+              <button 
+                onClick={logout}
+                className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-zinc-500 hover:text-white transition-all hover:bg-red-500/10 hover:border-red-500/20"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </header>
 
         <main className="p-6 max-w-2xl mx-auto relative z-10">
