@@ -12,9 +12,11 @@
         "unit": { "type": "string", "description": "Unit (kg, liters, etc.)" },
         "isFinished": { "type": "boolean", "description": "Whether the item is finished." },
         "finishedDate": { "type": "string", "format": "date-time", "description": "When the item was finished." },
-        "uid": { "type": "string", "description": "User ID of the owner." }
+        "uid": { "type": "string", "description": "User ID of the owner." },
+        "familyCode": { "type": "string", "description": "The shared family code." },
+        "reminderDate": { "type": "string", "format": "date-time", "description": "Optional reminder date." }
       },
-      "required": ["name", "addedDate", "cost", "quantity", "unit", "isFinished", "uid"]
+      "required": ["name", "addedDate", "cost", "quantity", "unit", "isFinished", "uid", "familyCode"]
     },
     "Goal": {
       "title": "Savings Goal",
@@ -25,13 +27,54 @@
         "targetPrice": { "type": "number", "description": "Target house/car price." },
         "downpaymentPercent": { "type": "number", "description": "Target downpayment percentage (e.g., 25)." },
         "interestRate": { "type": "number", "description": "Annual interest rate (e.g., 16)." },
-        "uid": { "type": "string", "description": "User ID of the owner." }
+        "uid": { "type": "string", "description": "User ID of the owner." },
+        "familyCode": { "type": "string", "description": "The shared family code." }
       },
-      "required": ["currentSavings", "targetPrice", "downpaymentPercent", "interestRate", "uid"]
+      "required": ["currentSavings", "targetPrice", "downpaymentPercent", "interestRate", "uid", "familyCode"]
+    },
+    "Message": {
+      "title": "Family Chat Message",
+      "description": "A message sent in the family chat.",
+      "type": "object",
+      "properties": {
+        "text": { "type": "string", "description": "The message text." },
+        "senderId": { "type": "string", "description": "The UID of the sender." },
+        "senderName": { "type": "string", "description": "The name of the sender." },
+        "senderPhoto": { "type": "string", "description": "The photo URL of the sender." },
+        "familyCode": { "type": "string", "description": "The shared family code." },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the message was sent." }
+      },
+      "required": ["text", "senderId", "senderName", "familyCode", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "A user's profile information.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The UID of the user." },
+        "displayName": { "type": "string", "description": "The full name of the user." },
+        "photoURL": { "type": "string", "description": "The profile picture URL." },
+        "familyCode": { "type": "string", "description": "The shared family code." }
+      },
+      "required": ["uid", "displayName", "photoURL"]
+    },
+    "Family": {
+      "title": "Family",
+      "description": "A family group.",
+      "type": "object",
+      "properties": {
+        "familyCode": { "type": "string", "description": "The shared family code." },
+        "createdBy": { "type": "string", "description": "UID of the creator." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the family was created." }
+      },
+      "required": ["familyCode", "createdBy", "createdAt"]
     }
   },
   "firestore": {
     "/inventory": { "schema": "InventoryItem", "description": "Collection of inventory items." },
-    "/goals": { "schema": "Goal", "description": "User goals." }
+    "/goals": { "schema": "Goal", "description": "User goals." },
+    "/messages": { "schema": "Message", "description": "Family chat messages." },
+    "/users": { "schema": "UserProfile", "description": "User profiles." },
+    "/families": { "schema": "Family", "description": "Family groups." }
   }
 }

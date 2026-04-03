@@ -1,9 +1,15 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-sidebar: #3D5654;
+  --color-accent: #D4A017;
+  --color-teal: #1ABC9C;
+  --color-bg-light: #F4F7F6;
+  --color-bg-dark: #1E292B;
 
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
@@ -18,27 +24,40 @@
   }
 
   .glass {
-    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl;
+    @apply bg-white/80 backdrop-blur-xl border border-white/20 shadow-xl;
   }
   
   .glass-dark {
     @apply bg-black/40 backdrop-blur-2xl border border-white/5 shadow-2xl;
   }
 
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600;
+  .sidebar-gradient {
+    @apply bg-gradient-to-b from-[#3D5654] to-[#2C3E3D];
+  }
+
+  .card-shadow {
+    @apply shadow-[0_8px_30px_rgb(0,0,0,0.04)];
   }
 }
 
 @layer base {
   body {
-    @apply min-h-screen text-zinc-100 antialiased;
-    background-color: #09090b;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(245, 158, 11, 0.15) 0px, transparent 50%),
-      radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
-      radial-gradient(at 50% 50%, rgba(168, 85, 247, 0.05) 0px, transparent 50%),
-      url('https://www.transparenttextures.com/patterns/carbon-fibre.png');
-    background-attachment: fixed;
+    @apply min-h-screen antialiased transition-colors duration-500;
   }
+  
+  .dark body {
+    @apply bg-[#1E292B] text-zinc-100;
+  }
+
+  body:not(.dark) {
+    @apply bg-[#F4F7F6] text-zinc-900;
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

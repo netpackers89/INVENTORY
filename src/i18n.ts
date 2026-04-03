@@ -17,6 +17,11 @@ export const translations = {
       futurePlanning: "Future Planning",
       systemControl: "System Control"
     },
+    summary: {
+      totalValue: "Total Value",
+      activeItems: "Active Items",
+      goalProgress: "Goal Progress"
+    },
     auth: {
       familyAccess: "Family Access",
       familyDesc: "Enter the family password to unlock the shared consumption tree.",
@@ -48,7 +53,10 @@ export const translations = {
       emptyDesc: "Time to stock up and start tracking.",
       added: "Added",
       birr: "Birr",
-      boughtTimes: "Bought {n} times"
+      boughtTimes: "Bought {n} times",
+      reminder: "Reminder",
+      setReminder: "Set Reminder",
+      reminderSet: "Reminder set for {date}"
     },
     stats: {
       monthlySpend: "Monthly Spend",
@@ -100,6 +108,20 @@ export const translations = {
       clearBtn: "Clear {n} Finished Items",
       confirmClear: "Are you sure you want to delete {n} finished items from history?",
       clearSuccess: "History cleared successfully"
+    },
+    login: {
+      title: "Welcome to FamilyHub",
+      desc: "Connect with your family and track your shared goals.",
+      googleBtn: "Sign in with Google",
+      guestBtn: "Continue as Guest",
+      setupTitle: "Complete Your Profile",
+      setupDesc: "Tell us who you are so your family can recognize you.",
+      fullName: "Full Name",
+      photoUrl: "Profile Picture URL",
+      familyCode: "Family Access Code",
+      saveBtn: "Start Using FamilyHub",
+      invalidCode: "Invalid family code. Please check or create a new one.",
+      validating: "Validating code..."
     }
   },
   am: {
@@ -119,6 +141,11 @@ export const translations = {
       consumptionData: "የፍጆታ መረጃ",
       futurePlanning: "የወደፊት እቅድ",
       systemControl: "የስርዓት ቁጥጥር"
+    },
+    summary: {
+      totalValue: "ጠቅላላ ዋጋ",
+      activeItems: "በእጅ ያሉ እቃዎች",
+      goalProgress: "የግብ ሂደት"
     },
     auth: {
       familyAccess: "የቤተሰብ መግቢያ",
@@ -151,7 +178,10 @@ export const translations = {
       emptyDesc: "እቃዎችን በመግዛት መከታተል ይጀምሩ።",
       added: "ተጨምሯል",
       birr: "ብር",
-      boughtTimes: "{n} ጊዜ ተገዝቷል"
+      boughtTimes: "{n} ጊዜ ተገዝቷል",
+      reminder: "ማሳሰቢያ",
+      setReminder: "ማሳሰቢያ አዘጋጅ",
+      reminderSet: "ለ {date} ማሳሰቢያ ተዘጋጅቷል"
     },
     stats: {
       monthlySpend: "የወር ወጪ",
@@ -203,6 +233,20 @@ export const translations = {
       clearBtn: "{n} ያለቁ እቃዎችን ከታሪክ አጽዳ",
       confirmClear: "እርግጠኛ ነዎት {n} ያለቁ እቃዎችን ከታሪክ መሰረዝ ይፈልጋሉ?",
       clearSuccess: "ታሪክ በስኬት ተሰርዟል"
+    },
+    login: {
+      title: "ወደ FamilyHub እንኳን መጡ",
+      desc: "ከቤተሰብዎ ጋር ይገናኙ እና የጋራ ግቦችዎን ይከታተሉ።",
+      googleBtn: "በGoogle ይግቡ",
+      guestBtn: "እንደ እንግዳ ቀጥል",
+      setupTitle: "መገለጫዎን ያጠናቅቁ",
+      setupDesc: "ቤተሰብዎ እንዲያውቁዎት ማንነትዎን ይንገሩን።",
+      fullName: "ሙሉ ስም",
+      photoUrl: "የመገለጫ ምስል አድራሻ",
+      familyCode: "የቤተሰብ መለያ ኮድ",
+      saveBtn: "FamilyHub መጠቀም ጀምር",
+      invalidCode: "የተሳሳተ የቤተሰብ ኮድ። እባክዎን ያረጋግጡ ወይም አዲስ ይፍጠሩ።",
+      validating: "ኮዱን በማረጋገጥ ላይ..."
     }
   }
 };

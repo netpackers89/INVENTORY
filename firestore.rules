@@ -1,62 +1,200 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper Functions
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (UID)
+    // Fields:
+    //   - uid: string (required) - The UID of the user.
+    //   - displayName: string (required) - The full name of the user.
+    //   - photoURL: string (required) - The profile picture URL.
+    //   - familyCode: string (optional) - The shared family code.
+    //   - role: string (optional) - 'admin' or 'user'.
+    //
+    // Collection: inventory
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required)
+    //   - addedDate: string (required) - ISO 8601
+    //   - cost: number (required)
+    //   - quantity: number (required)
+    //   - unit: string (required)
+    //   - isFinished: bool (required)
+    //   - finishedDate: string (optional) - ISO 8601
+    //   - uid: string (required)
+    //   - familyCode: string (required)
+    //   - reminderDate: string (optional) - ISO 8601
+    //   - authorName: string (optional)
+    //   - authorPhoto: string (optional)
+    //
+    // Collection: goals
+    // Document ID: auto-generated
+    // Fields:
+    //   - currentSavings: number (required)
+    //   - targetPrice: number (required)
+    //   - downpaymentPercent: number (required)
+    //   - interestRate: number (required)
+    //   - uid: string (required)
+    //   - familyCode: string (required)
+    //
+    // ===============================================================
+
+    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
+    
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
-    }
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.uid;
-    }
-    function uidUnchanged() {
-      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
-    }
-    function uidNotModified() {
-      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
     }
 
     function isAdmin() {
       return isAuthenticated() &&
-        (
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "freedommight87@gmail.com" && request.auth.token.email_verified == true)
-        );
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "freedommight87@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function getUserData() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) ? get(path).data : null;
+    }
+
+    function isFamilyMember(docData) {
+      let user = getUserData();
+      return user != null && docData.familyCode != "" && docData.familyCode == user.familyCode;
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    function isRecent(timeStr) {
+      return isValidDateString(timeStr) && 
+             request.time - time(timeStr) < duration.value(10, 'm') &&
+             request.time - time(timeStr) > duration.value(-10, 'm');
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
     }
 
     // Domain Validators
-    function isValidInventoryItem(data) {
-      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.addedDate is string &&
+    function isValidUser(data) {
+      return data.uid is string && data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 100 &&
+             data.photoURL is string && data.photoURL.size() < 1000 &&
+             (!('familyCode' in data) || (data.familyCode is string && data.familyCode.size() > 0 && data.familyCode.size() < 50)) &&
+             (!('role' in data) || (data.role in ['admin', 'user']));
+    }
+
+    function isValidInventory(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
              data.cost is number && data.cost >= 0 &&
-             data.quantity is number && data.quantity > 0 &&
-             data.unit is string &&
+             data.quantity is number && data.quantity >= 0 &&
+             data.unit is string && data.unit.size() < 20 &&
              data.isFinished is bool &&
-             data.uid is string;
+             data.uid is string &&
+             data.familyCode is string && data.familyCode.size() < 50 &&
+             (!('reminderDate' in data) || data.reminderDate == null || isValidDateString(data.reminderDate)) &&
+             (!('finishedDate' in data) || data.finishedDate == null || isValidDateString(data.finishedDate)) &&
+             (!('authorName' in data) || data.authorName is string) &&
+             (!('authorPhoto' in data) || data.authorPhoto is string) &&
+             isValidDateString(data.addedDate);
     }
 
     function isValidGoal(data) {
       return data.currentSavings is number && data.currentSavings >= 0 &&
-             data.targetPrice is number && data.targetPrice > 0 &&
-             data.downpaymentPercent is number && data.downpaymentPercent >= 0 && data.downpaymentPercent <= 100 &&
+             data.targetPrice is number && data.targetPrice >= 0 &&
+             data.downpaymentPercent is number && data.downpaymentPercent >= 0 &&
              data.interestRate is number && data.interestRate >= 0 &&
-             data.uid is string;
+             data.uid is string &&
+             data.familyCode is string && data.familyCode.size() > 0 && data.familyCode.size() < 50;
     }
 
+    // --- Rules ---
+
+    // Inventory
     match /inventory/{itemId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidInventoryItem(request.resource.data) && uidUnchanged();
-      allow update: if isAuthenticated() && isValidInventoryItem(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner() || isAdmin();
+      allow read: if isAuthenticated() && (
+        resource.data.uid == request.auth.uid || isFamilyMember(resource.data)
+      );
+      
+      allow create: if isAuthenticated() && 
+        isValidInventory(request.resource.data) && 
+        request.resource.data.uid == request.auth.uid;
+        
+      allow update: if isAuthenticated() && (
+        // Owner update
+        (isOwner(resource.data.uid) && 
+         isValidInventory(request.resource.data) && 
+         areImmutableFieldsUnchanged(['uid', 'addedDate'])) ||
+        // Family member update (only certain fields)
+        (isFamilyMember(resource.data) && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isFinished', 'finishedDate']) &&
+         request.resource.data.isFinished is bool &&
+         (request.resource.data.finishedDate == null || isValidDateString(request.resource.data.finishedDate)))
+      );
+      
+      allow delete: if isAuthenticated() && (isOwner(resource.data.uid) || isAdmin());
+    }
+    
+    // Goals
+    match /goals/{goalId} {
+      allow read: if isAuthenticated() && (
+        resource.data.uid == request.auth.uid || isFamilyMember(resource.data)
+      );
+      
+      allow create: if isAuthenticated() && 
+        isValidGoal(request.resource.data) && 
+        request.resource.data.uid == request.auth.uid;
+        
+      allow update: if isAuthenticated() && (
+        (isOwner(resource.data.uid) && 
+         isValidGoal(request.resource.data) && 
+         areImmutableFieldsUnchanged(['uid', 'familyCode'])) ||
+        (isFamilyMember(resource.data) && 
+         isValidGoal(request.resource.data) && 
+         areImmutableFieldsUnchanged(['uid', 'familyCode']))
+      );
+      
+      allow delete: if isAuthenticated() && (isOwner(resource.data.uid) || isAdmin());
     }
 
-    match /goals/{goalId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidGoal(request.resource.data) && uidUnchanged();
-      allow update: if isAuthenticated() && isValidGoal(request.resource.data) && uidNotModified();
-      allow delete: if isDocOwner() || isAdmin();
+    // Users
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || isFamilyMember(resource.data)
+      );
+      
+      allow create: if isOwner(userId) && 
+        isValidUser(request.resource.data) &&
+        (!('role' in request.resource.data) || request.resource.data.role == 'user');
+        
+      allow update: if isOwner(userId) && 
+        isValidUser(request.resource.data) &&
+        (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    // Families
+    match /families/{familyCode} {
+      allow get: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+        request.resource.data.familyCode == familyCode &&
+        request.resource.data.createdBy == request.auth.uid &&
+        isValidDateString(request.resource.data.createdAt);
+    }
+
+    // Test connection
+    match /test/connection {
+      allow read: if true;
     }
   }
 }

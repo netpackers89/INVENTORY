@@ -8,6 +8,10 @@ export interface InventoryItem {
   isFinished: boolean;
   finishedDate?: string;
   uid: string;
+  familyCode: string;
+  reminderDate?: string;
+  authorName?: string;
+  authorPhoto?: string;
 }
 
 export interface Goal {
@@ -17,4 +21,11 @@ export interface Goal {
   downpaymentPercent: number;
   interestRate: number;
   uid: string;
+}
+
+export interface UserProfile {
+  uid: string;
+  displayName: string;
+  photoURL: string;
+  familyCode?: string;
 }
