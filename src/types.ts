@@ -28,4 +28,6 @@ export interface UserProfile {
   displayName: string;
   photoURL: string;
   familyCode?: string;
+  gender?: 'male' | 'female';
+  email?: string;
 }

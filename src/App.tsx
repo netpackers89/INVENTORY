@@ -20,14 +20,15 @@ import {
   limit
 } from 'firebase/firestore';
 import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
   onAuthStateChanged, 
   User,
   signOut,
-  signInAnonymously
+  updateProfile
 } from 'firebase/auth';
-import { db, auth } from './firebase';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { db, auth, storage } from './firebase';
 import { InventoryItem, Goal, UserProfile } from './types';
 import { cn } from './lib/utils';
 import { translations, Language } from './i18n';
@@ -53,14 +54,16 @@ import {
   Wallet,
   Settings2,
   LayoutDashboard,
-  LogIn,
+
   Sun,
   Moon,
   Languages,
   Trash2,
   Shield,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  Menu,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInDays, addDays, parseISO } from 'date-fns';
@@ -130,55 +133,192 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 // --- Views ---
 
- const LoginView: React.FC<{ onLogin: () => void; onGuestLogin: () => void; theme: string; t: any }> = ({ onLogin, onGuestLogin, theme, t }) => (
-  <div className={cn(
-    "min-h-screen flex items-center justify-center p-6 transition-colors duration-500",
-    theme === 'dark' ? "bg-zinc-950" : "bg-zinc-50"
-  )}>
-    <motion.div 
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className={cn(
-        "w-full max-w-md p-10 rounded-[3rem] border text-center space-y-8 shadow-2xl",
-        theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200"
-      )}
-    >
-      <div className="w-20 h-20 bg-accent rounded-[2rem] flex items-center justify-center mx-auto shadow-xl shadow-accent/20">
-        <Home className="w-10 h-10 text-black" />
-      </div>
-      <div>
-        <h1 className={cn("text-3xl font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>{t.login.title}</h1>
-        <p className="text-zinc-500 mt-2">{t.login.desc}</p>
-      </div>
-      <div className="space-y-4">
-        <button 
-          onClick={onLogin}
-          className="w-full py-4 bg-white text-black font-black uppercase text-xs tracking-[0.2em] rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] transition-all active:scale-[0.98] shadow-xl"
-        >
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/pjax/google.png" alt="Google" className="w-5 h-5" />
-          {t.login.googleBtn}
-        </button>
-        <button 
-          onClick={onGuestLogin}
-          className={cn(
-            "w-full py-4 font-black uppercase text-xs tracking-[0.2em] rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] transition-all active:scale-[0.98] border",
-            theme === 'dark' ? "bg-white/5 border-white/10 text-white" : "bg-zinc-100 border-zinc-200 text-zinc-900"
-          )}
-        >
-          {t.login.guestBtn}
-        </button>
-      </div>
-    </motion.div>
-  </div>
-);
+const LoginView: React.FC<{ 
+  onSignIn: (email: string, password: string) => Promise<void>; 
+  onSignUp: (email: string, password: string) => Promise<void>;
+  theme: string; 
+  t: any 
+}> = ({ onSignIn, onSignUp, theme, t }) => {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
-  const ProfileSetupView: React.FC<{ user: User; onSave: (name: string, photo: string, code: string, isNewFamily: boolean) => Promise<void>; theme: string; t: any }> = ({ user, onSave, theme, t }) => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError('');
+
+    if (isSignUp && password !== confirmPassword) {
+      setError('Passwords do not match');
+      setIsLoading(false);
+      return;
+    }
+
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters');
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      if (isSignUp) {
+        await onSignUp(email, password);
+      } else {
+        await onSignIn(email, password);
+      }
+    } catch (err: any) {
+      const errorCode = err.code;
+      if (errorCode === 'auth/user-not-found') {
+        setError('No account found with this email. Please sign up.');
+      } else if (errorCode === 'auth/wrong-password') {
+        setError('Incorrect password. Please try again.');
+      } else if (errorCode === 'auth/email-already-in-use') {
+        setError('An account with this email already exists. Please sign in.');
+      } else if (errorCode === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
+      } else if (errorCode === 'auth/weak-password') {
+        setError('Password is too weak. Please use at least 6 characters.');
+      } else {
+        setError(isSignUp ? 'Sign up failed. Please try again.' : 'Sign in failed. Please try again.');
+      }
+      console.error('Auth error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className={cn(
+      "min-h-screen flex items-center justify-center p-4 sm:p-6 transition-colors duration-500",
+      theme === 'dark' ? "bg-zinc-950" : "bg-zinc-50"
+    )}>
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className={cn(
+          "w-full max-w-md p-6 sm:p-10 rounded-3xl sm:rounded-[3rem] border text-center space-y-6 sm:space-y-8 shadow-2xl",
+          theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200"
+        )}
+      >
+        <div className="w-16 h-16 sm:w-20 sm:h-20 bg-accent rounded-3xl sm:rounded-[2rem] flex items-center justify-center mx-auto shadow-xl shadow-accent/20">
+          <Home className="w-8 h-8 sm:w-10 sm:h-10 text-black" />
+        </div>
+        <div>
+          <h1 className={cn("text-2xl sm:text-3xl font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>
+            {isSignUp ? 'Create Account' : 'Welcome Back'}
+          </h1>
+          <p className="text-zinc-500 mt-2 text-sm sm:text-base">
+            {isSignUp ? 'Sign up to start managing your family inventory' : 'Sign in to your FamilyHub account'}
+          </p>
+        </div>
+
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p className="text-red-400 text-xs font-bold">{error}</p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2 text-left block">Email</label>
+            <input 
+              type="email" 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              required
+              className={cn(
+                "w-full rounded-2xl p-4 outline-none transition-all",
+                theme === 'dark' ? "bg-white/5 border border-white/10 text-white focus:border-accent placeholder:text-zinc-600" : "bg-zinc-50 border border-zinc-200 text-zinc-900 focus:border-accent placeholder:text-zinc-400"
+              )}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2 text-left block">Password</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+              minLength={6}
+              className={cn(
+                "w-full rounded-2xl p-4 outline-none transition-all",
+                theme === 'dark' ? "bg-white/5 border border-white/10 text-white focus:border-accent placeholder:text-zinc-600" : "bg-zinc-50 border border-zinc-200 text-zinc-900 focus:border-accent placeholder:text-zinc-400"
+              )}
+            />
+          </div>
+
+          {isSignUp && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2 text-left block">Confirm Password</label>
+              <input 
+                type="password" 
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={6}
+                className={cn(
+                  "w-full rounded-2xl p-4 outline-none transition-all",
+                  theme === 'dark' ? "bg-white/5 border border-white/10 text-white focus:border-accent placeholder:text-zinc-600" : "bg-zinc-50 border border-zinc-200 text-zinc-900 focus:border-accent placeholder:text-zinc-400"
+                )}
+              />
+            </div>
+          )}
+
+          <button 
+            type="submit"
+            disabled={isLoading || !email || !password}
+            className="w-full py-4 bg-accent text-black font-black uppercase text-xs tracking-[0.2em] rounded-2xl hover:scale-[1.02] transition-all active:scale-[0.98] shadow-xl disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+          >
+            {isLoading ? (
+              <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+            ) : (
+              isSignUp ? 'Create Account' : 'Sign In'
+            )}
+          </button>
+        </form>
+
+        <div className="pt-2">
+          <button
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setError('');
+              setConfirmPassword('');
+            }}
+            className="text-zinc-500 text-sm hover:text-accent transition-colors"
+          >
+            {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+  const ProfileSetupView: React.FC<{ user: User; onSave: (name: string, photo: string, code: string, isNewFamily: boolean, gender: 'male' | 'female') => Promise<void>; theme: string; t: any }> = ({ user, onSave, theme, t }) => {
   const [name, setName] = useState(user.displayName || '');
-  const [photo, setPhoto] = useState(user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}`);
+  const [gender, setGender] = useState<'male' | 'female'>('male');
+  const [photo, setPhoto] = useState(user.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}&gender=male`);
+
   const [code, setCode] = useState('');
   const [isNewFamily, setIsNewFamily] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
+
   const [error, setError] = useState('');
+
+
+  // Update avatar when gender changes (only if using default avatar)
+  useEffect(() => {
+    if (photo.includes('dicebear')) {
+      setPhoto(`https://api.dicebear.com/7.x/avataaars/svg?seed=${user.uid}&gender=${gender}`);
+    }
+  }, [gender, user.uid, photo]);
 
   const handleSave = async () => {
     if (!name || !photo || !code) return;
@@ -202,7 +342,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
         return;
       }
       
-      await onSave(name, photo, code, isNewFamily);
+      await onSave(name, photo, code, isNewFamily, gender);
     } catch (err) {
       setError("Error validating family code. Please try again.");
       console.error(err);
@@ -234,19 +374,52 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
           )}
         </div>
 
-        <div className="flex justify-center">
-          <div className="w-24 h-24 rounded-full border-4 border-accent p-1">
+        {/* Profile Picture Preview */}
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-28 h-28 rounded-full border-4 border-accent p-1 overflow-hidden bg-white/10">
             <img src={photo} alt="Preview" className="w-full h-full rounded-full object-cover" referrerPolicy="no-referrer" />
           </div>
         </div>
 
         <div className="space-y-4">
+          {/* Gender Selection */}
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2">Gender</label>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setGender('male')}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-2xl border transition-all flex items-center justify-center gap-2",
+                  gender === 'male'
+                    ? "bg-blue-500/20 border-blue-500 text-blue-400"
+                    : theme === 'dark' ? "bg-white/5 border-white/10 text-zinc-500" : "bg-zinc-50 border-zinc-200 text-zinc-500"
+                )}
+              >
+                <span className="text-lg">♂</span>
+                <span className="text-xs font-bold uppercase">Male</span>
+              </button>
+              <button
+                onClick={() => setGender('female')}
+                className={cn(
+                  "flex-1 py-3 px-4 rounded-2xl border transition-all flex items-center justify-center gap-2",
+                  gender === 'female'
+                    ? "bg-pink-500/20 border-pink-500 text-pink-400"
+                    : theme === 'dark' ? "bg-white/5 border-white/10 text-zinc-500" : "bg-zinc-50 border-zinc-200 text-zinc-500"
+                )}
+              >
+                <span className="text-lg">♀</span>
+                <span className="text-xs font-bold uppercase">Female</span>
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2">{t.login.fullName}</label>
             <input 
               type="text" 
               value={name} 
               onChange={(e) => setName(e.target.value)}
+              placeholder="Enter your full name"
               className={cn(
                 "w-full rounded-2xl p-4 outline-none transition-all",
                 theme === 'dark' ? "bg-white/5 border border-white/10 text-white focus:border-accent" : "bg-zinc-50 border border-zinc-200 text-zinc-900 focus:border-accent"
@@ -254,13 +427,14 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
             />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2">{t.login.photoUrl}</label>
+            <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500 ml-2">Photo URL (Optional)</label>
             <input 
               type="text" 
               value={photo} 
               onChange={(e) => setPhoto(e.target.value)}
+              placeholder="Or paste an image URL"
               className={cn(
-                "w-full rounded-2xl p-4 outline-none transition-all",
+                "w-full rounded-2xl p-4 outline-none transition-all text-sm",
                 theme === 'dark' ? "bg-white/5 border border-white/10 text-white focus:border-accent" : "bg-zinc-50 border border-zinc-200 text-zinc-900 focus:border-accent"
               )}
             />
@@ -362,6 +536,8 @@ export default function App() {
   const [lang, setLang] = useState<Language>('en');
   const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -370,6 +546,19 @@ export default function App() {
   const [isProfileSetupOpen, setIsProfileSetupOpen] = useState(false);
 
   const t = translations[lang];
+
+  // Detect mobile screen
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+      if (window.innerWidth >= 768) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // --- Auth ---
   useEffect(() => {
@@ -414,21 +603,15 @@ export default function App() {
     return unsubscribe;
   }, [user, isAuthReady, userProfile]);
 
-  const login = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error('Login error:', error);
-    }
+  const signUp = async (email: string, password: string) => {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    // Set display name from email (before @)
+    const displayName = email.split('@')[0];
+    await updateProfile(userCredential.user, { displayName });
   };
 
-  const loginAnonymously = async () => {
-    try {
-      await signInAnonymously(auth);
-    } catch (error) {
-      console.error('Anonymous login error:', error);
-    }
+  const signIn = async (email: string, password: string) => {
+    await signInWithEmailAndPassword(auth, email, password);
   };
 
   const logout = async () => {
@@ -528,8 +711,8 @@ export default function App() {
         isFinished: false,
         uid: user.uid,
         familyCode: userProfile?.familyCode || '',
-        authorName: user.displayName || 'Anonymous',
-        authorPhoto: user.photoURL || '',
+        authorName: userProfile?.displayName || user.displayName || 'Anonymous',
+        authorPhoto: userProfile?.photoURL || user.photoURL || '',
         reminderDate: reminderDate || null
       });
       setIsAddModalOpen(false);
@@ -573,7 +756,7 @@ export default function App() {
     }
   };
 
-  const saveProfile = async (name: string, photo: string, code: string, isNewFamily: boolean) => {
+  const saveProfile = async (name: string, photo: string, code: string, isNewFamily: boolean, gender: 'male' | 'female') => {
     if (!user) return;
     
     try {
@@ -590,7 +773,9 @@ export default function App() {
         uid: user.uid,
         displayName: name,
         photoURL: photo,
-        familyCode: code
+        familyCode: code,
+        gender: gender,
+        email: user.email || undefined
       };
       
       await setDoc(doc(db, 'users', user.uid), profile);
@@ -682,7 +867,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginView onLogin={login} onGuestLogin={loginAnonymously} theme={theme} t={t} />;
+    return <LoginView onSignIn={signIn} onSignUp={signUp} theme={theme} t={t} />;
   }
 
   if (isProfileSetupOpen) {
@@ -695,11 +880,162 @@ export default function App() {
         "min-h-screen font-sans selection:bg-amber-500/30 overflow-x-hidden transition-colors duration-500 flex flex-col md:flex-row",
         theme === 'dark' ? "bg-[#1E292B] text-zinc-100" : "bg-[#F4F7F6] text-zinc-900"
       )}>
-        {/* Sidebar */}
+        {/* Mobile Header - Compact */}
+        <div className="md:hidden fixed top-0 left-0 right-0 z-50 h-14 px-3 flex items-center justify-between sidebar-gradient shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-accent/30 p-0.5 bg-white/10">
+              <img 
+                src={userProfile?.photoURL || user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid || 'guest'}&gender=${userProfile?.gender || 'male'}`} 
+                alt="Profile" 
+                className="w-full h-full rounded-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-white font-bold text-sm truncate max-w-[120px]">{userProfile?.displayName || user?.displayName || 'Guest'}</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-white/60 font-medium">{activeItems.length} active</span>
+                <span className="w-1 h-1 rounded-full bg-accent"></span>
+                <span className="text-[9px] text-white/60 font-medium">{finishedItems.length} done</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setIsAddModalOpen(true)}
+              className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center text-accent"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-white"
+            >
+              {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        {/* Mobile Menu Overlay */}
+        <AnimatePresence>
+          {isMobileMenuOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40"
+              />
+              <motion.aside
+                initial={{ x: '-100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '-100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                className="md:hidden fixed top-[60px] left-0 bottom-0 w-[280px] sidebar-gradient z-50 flex flex-col shadow-2xl"
+              >
+                {/* User Profile Card */}
+                <div className="p-4 border-b border-white/10">
+                  <div className="flex items-center gap-3">
+                    <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-accent/30 p-0.5 bg-white/10">
+                      <img 
+                        src={userProfile?.photoURL || user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid || 'guest'}&gender=${userProfile?.gender || 'male'}`} 
+                        alt="Profile" 
+                        className="w-full h-full rounded-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-white font-bold text-sm truncate">{userProfile?.displayName || user?.displayName || 'Guest User'}</h3>
+                      <p className="text-white/50 text-[10px]">{user?.email || 'Guest Mode'}</p>
+                      {userProfile?.gender && (
+                        <span className={cn(
+                          "inline-flex items-center gap-1 text-[10px] mt-1 px-2 py-0.5 rounded-full",
+                          userProfile.gender === 'male' 
+                            ? "bg-blue-500/20 text-blue-300" 
+                            : "bg-pink-500/20 text-pink-300"
+                        )}>
+                          {userProfile.gender === 'male' ? '♂' : '♀'} {userProfile.gender}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mobile Navigation */}
+                <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+                  <MobileNavButton 
+                    active={activeTab === 'home'} 
+                    onClick={() => { setActiveTab('home'); setIsMobileMenuOpen(false); }}
+                    icon={<LayoutDashboard className="w-5 h-5" />} 
+                    label={t.tabs.present}
+                  />
+                  <MobileNavButton 
+                    active={activeTab === 'stats'} 
+                    onClick={() => { setActiveTab('stats'); setIsMobileMenuOpen(false); }}
+                    icon={<BarChart3 className="w-5 h-5" />} 
+                    label={t.tabs.past}
+                  />
+                  <MobileNavButton 
+                    active={activeTab === 'goal'} 
+                    onClick={() => { setActiveTab('goal'); setIsMobileMenuOpen(false); }}
+                    icon={<Target className="w-5 h-5" />} 
+                    label={t.tabs.future}
+                  />
+                  <MobileNavButton 
+                    active={activeTab === 'manage'} 
+                    onClick={() => { setActiveTab('manage'); setIsMobileMenuOpen(false); }}
+                    icon={<Settings2 className="w-5 h-5" />} 
+                    label={t.tabs.manage}
+                  />
+                </nav>
+
+                {/* Mobile Active Users */}
+                <div className="p-4 border-t border-white/10">
+                  <h3 className="text-accent text-[10px] font-black uppercase tracking-widest mb-3">Active Users</h3>
+                  <div className="flex -space-x-2 mb-4">
+                    {activeUsers.map((u) => (
+                      <div key={u.uid} className="w-8 h-8 rounded-full border-2 border-sidebar overflow-hidden bg-white/10" title={u.displayName}>
+                        <img src={u.photoURL} alt={u.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setLang(lang === 'en' ? 'am' : 'en')}
+                      className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center gap-2 text-white/70"
+                    >
+                      <Languages className="w-4 h-4" />
+                      <span className="text-xs font-bold">{lang === 'en' ? 'English' : 'Amharic'}</span>
+                    </button>
+                    <button 
+                      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                      className="flex-1 py-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center gap-2 text-white/70"
+                    >
+                      {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                      <span className="text-xs font-bold">{theme === 'dark' ? 'Light' : 'Dark'}</span>
+                    </button>
+                  </div>
+                  
+                  <button 
+                    onClick={logout}
+                    className="w-full mt-2 py-3 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center gap-2 text-red-400"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    <span className="text-xs font-bold">Logout</span>
+                  </button>
+                </div>
+              </motion.aside>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Desktop Sidebar */}
         <aside className={cn(
-          "sidebar-gradient shrink-0 md:h-screen sticky top-0 z-50 flex flex-col transition-all duration-500",
-          isSidebarCollapsed ? "w-24" : "w-full md:w-72",
-          "md:rounded-r-[3rem] shadow-2xl"
+          "sidebar-gradient shrink-0 hidden md:flex md:h-screen sticky top-0 z-50 flex-col transition-all duration-500",
+          isSidebarCollapsed ? "w-24" : "w-72",
+          "rounded-r-[3rem] shadow-2xl"
         )}>
           {/* Collapse Toggle */}
           <button 
@@ -712,9 +1048,9 @@ export default function App() {
           {/* Profile Section */}
           <div className={cn("p-8 flex flex-col items-center text-center border-b border-white/5 transition-all", isSidebarCollapsed ? "px-4" : "px-8")}>
             <div className="relative mb-4">
-              <div className={cn("rounded-full overflow-hidden border-2 border-accent/30 p-1 transition-all", isSidebarCollapsed ? "w-12 h-12" : "w-20 h-20")}>
+              <div className={cn("rounded-full overflow-hidden border-2 border-accent/30 p-1 transition-all bg-white/10", isSidebarCollapsed ? "w-12 h-12" : "w-20 h-20")}>
                 <img 
-                  src={user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid || 'guest'}`} 
+                  src={userProfile?.photoURL || user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid || 'guest'}&gender=${userProfile?.gender || 'male'}`} 
                   alt="Profile" 
                   className="w-full h-full rounded-full object-cover"
                   referrerPolicy="no-referrer"
@@ -724,7 +1060,7 @@ export default function App() {
             </div>
             {!isSidebarCollapsed && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <h2 className="text-white font-black tracking-tight text-lg uppercase">{user?.displayName || 'Guest User'}</h2>
+                <h2 className="text-white font-black tracking-tight text-lg uppercase">{userProfile?.displayName || user?.displayName || 'Guest User'}</h2>
                 <p className="text-white/40 text-[10px] font-medium truncate w-full">{user?.email || 'guest@example.com'}</p>
               </motion.div>
             )}
@@ -800,32 +1136,34 @@ export default function App() {
                 {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
               <button 
-                onClick={user?.isAnonymous ? login : logout}
+                onClick={logout}
                 className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-red-400 transition-all"
               >
-                {user?.isAnonymous ? <LogIn className="w-5 h-5" /> : <LogOut className="w-5 h-5" />}
+                <LogOut className="w-5 h-5" />
               </button>
             </div>
           </div>
         </aside>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col h-screen overflow-hidden relative transition-all duration-500">
-          {/* Top Bar */}
-          <header className="p-6 md:p-10 flex justify-between items-center shrink-0">
-            <div>
-              <h1 className={cn("text-3xl font-black tracking-tight flex items-center gap-3", theme === 'dark' ? "text-white" : "text-zinc-900")}>
-                {activeTab === 'home' && t.headers.kitchen}
-                {activeTab === 'stats' && t.headers.insight}
-                {activeTab === 'goal' && t.headers.milestone}
-                {activeTab === 'manage' && t.headers.console}
+        <div className="flex-1 flex flex-col h-screen overflow-hidden relative transition-all duration-500 pt-14 md:pt-0">
+          {/* Top Bar - Hidden on mobile */}
+          <header className="hidden md:flex p-4 md:p-10 justify-between items-start md:items-center shrink-0 gap-4">
+            <div className="min-w-0">
+              <h1 className={cn("text-xl md:text-3xl font-black tracking-tight flex items-center gap-2 md:gap-3 flex-wrap", theme === 'dark' ? "text-white" : "text-zinc-900")}>
+                <span className="truncate">
+                  {activeTab === 'home' && t.headers.kitchen}
+                  {activeTab === 'stats' && t.headers.insight}
+                  {activeTab === 'goal' && t.headers.milestone}
+                  {activeTab === 'manage' && t.headers.console}
+                </span>
                 {isFamilyMode && (
-                  <span className="px-3 py-1 bg-accent text-[10px] text-black font-black uppercase rounded-full tracking-tighter">
+                  <span className="px-2 md:px-3 py-1 bg-accent text-[9px] md:text-[10px] text-black font-black uppercase rounded-full tracking-tighter shrink-0">
                     {t.headers.family}
                   </span>
                 )}
               </h1>
-              <p className="text-xs text-zinc-500 font-medium mt-1">
+              <p className="text-[10px] md:text-xs text-zinc-500 font-medium mt-1">
                 {activeTab === 'home' && `${activeItems.length} ${t.headers.activeItems}`}
                 {activeTab === 'stats' && t.headers.consumptionData}
                 {activeTab === 'goal' && t.headers.futurePlanning}
@@ -833,25 +1171,26 @@ export default function App() {
               </p>
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 md:gap-4 shrink-0">
               <button 
                 onClick={() => isFamilyMode ? setIsFamilyMode(false) : setShowPasswordPrompt(true)}
                 className={cn(
-                  "px-6 py-3 rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center gap-2",
+                  "px-3 md:px-6 py-2 md:py-3 rounded-xl md:rounded-2xl font-black uppercase text-[9px] md:text-[10px] tracking-widest transition-all flex items-center gap-1.5 md:gap-2",
                   isFamilyMode 
                     ? "bg-accent text-black shadow-xl shadow-accent/20" 
                     : theme === 'dark' ? "bg-white/5 text-zinc-400 border border-white/10 hover:text-white" : "bg-white text-zinc-600 border border-zinc-200 hover:text-zinc-900 shadow-sm"
                 )}
               >
-                <Users className="w-4 h-4" />
-                {isFamilyMode ? 'Family Active' : 'Unlock Family'}
+                <Users className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                <span className="hidden sm:inline">{isFamilyMode ? 'Family Active' : 'Unlock Family'}</span>
+                <span className="sm:hidden">{isFamilyMode ? 'Family' : 'Unlock'}</span>
               </button>
               
               <button 
                 onClick={() => setIsAddModalOpen(true)}
-                className="w-12 h-12 rounded-2xl bg-teal text-white flex items-center justify-center shadow-xl shadow-teal/20 hover:scale-105 transition-all active:scale-95"
+                className="w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-teal text-white flex items-center justify-center shadow-xl shadow-teal/20 hover:scale-105 transition-all active:scale-95"
               >
-                <Plus className="w-6 h-6" />
+                <Plus className="w-5 h-5 md:w-6 md:h-6" />
               </button>
             </div>
           </header>
@@ -866,7 +1205,7 @@ export default function App() {
             </div>
           )}
 
-          <main className="flex-1 overflow-y-auto p-6 md:p-10 pt-0 scrollbar-hide">
+          <main className="flex-1 overflow-y-auto p-3 md:p-10 pb-24 md:pb-10 pt-0 scrollbar-hide">
             <AnimatePresence mode="wait">
               {activeTab === 'home' && (
                 <motion.div 
@@ -877,7 +1216,7 @@ export default function App() {
                   className="space-y-8"
                 >
                   {/* Top Summary Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
                     <SummaryCard 
                       title={t.summary.totalValue} 
                       value={`${inventory.reduce((acc, item) => acc + item.cost, 0).toLocaleString()} ETB`}
@@ -916,14 +1255,14 @@ export default function App() {
                     </div>
                   ) : (
                     <div className={cn(
-                      "rounded-[3rem] border overflow-hidden transition-colors",
+                      "rounded-2xl md:rounded-[3rem] border overflow-hidden transition-colors",
                       theme === 'dark' ? "bg-white/5 border-white/5" : "bg-white border-zinc-200 shadow-sm"
                     )}>
-                      <div className="p-8 border-b border-white/5 flex justify-between items-center">
-                        <h2 className={cn("text-xl font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>Active Inventory</h2>
+                      <div className="p-4 md:p-8 border-b border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <h2 className={cn("text-lg md:text-xl font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>Active Inventory</h2>
                         <div className="flex gap-2">
-                          <button onClick={() => setSortBy('frequency')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", sortBy === 'frequency' ? "bg-accent text-black" : "text-zinc-500")}>Frequency</button>
-                          <button onClick={() => setSortBy('cost')} className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", sortBy === 'cost' ? "bg-accent text-black" : "text-zinc-500")}>Cost</button>
+                          <button onClick={() => setSortBy('frequency')} className={cn("px-3 md:px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", sortBy === 'frequency' ? "bg-accent text-black" : "text-zinc-500")}>Frequency</button>
+                          <button onClick={() => setSortBy('cost')} className={cn("px-3 md:px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", sortBy === 'cost' ? "bg-accent text-black" : "text-zinc-500")}>Cost</button>
                         </div>
                       </div>
                       <div className="divide-y divide-white/5">
@@ -966,19 +1305,46 @@ export default function App() {
                   goal={goal}
                   theme={theme}
                   t={t}
+                  activeUsers={activeUsers}
                 />
               </motion.div>
             )}
           </AnimatePresence>
         </main>
 
-        {/* Floating Action Button */}
+        {/* Mobile Bottom Navigation */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-[#1E292B] to-[#2C3E3D] border-t border-white/10 px-2" style={{ paddingBottom: 'env(safe-area-inset-bottom, 16px)' }}>
+          <div className="flex items-center justify-around h-16">
+            {[
+              { id: 'home', icon: LayoutDashboard, label: t.tabs.present },
+              { id: 'stats', icon: BarChart3, label: t.tabs.past },
+              { id: 'goal', icon: Target, label: t.tabs.future },
+              { id: 'manage', icon: Settings2, label: t.tabs.manage },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1 w-16 h-14 rounded-xl transition-all",
+                  activeTab === tab.id 
+                    ? "bg-accent/20 text-accent" 
+                    : "text-white/50 hover:text-white/80"
+                )}
+              >
+                <tab.icon className="w-5 h-5" />
+                <span className="text-[9px] font-bold">{tab.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Floating Action Button - Desktop Only */}
         {activeTab === 'home' && (
           <button 
             onClick={() => setIsAddModalOpen(true)}
-            className="fixed bottom-32 right-6 w-16 h-16 bg-gradient-to-br from-amber-400 to-amber-600 text-black rounded-3xl shadow-2xl shadow-amber-500/40 flex items-center justify-center active:scale-90 transition-all z-30 group"
+            className="hidden md:flex fixed bottom-8 right-8 w-14 h-14 bg-gradient-to-br from-amber-400 to-amber-600 text-black rounded-2xl shadow-2xl shadow-amber-500/40 items-center justify-center active:scale-90 transition-all z-30 group"
           >
-            <Plus className="w-10 h-10 group-hover:rotate-90 transition-transform duration-500" />
+            <Plus className="w-7 h-7 group-hover:rotate-90 transition-transform duration-500" />
           </button>
         )}
 
@@ -1085,6 +1451,31 @@ export default function App() {
   );
 }
 
+function MobileNavButton({ active, onClick, icon, label }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string }) {
+  return (
+    <button 
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-4 px-4 py-4 rounded-2xl transition-all duration-300",
+        active 
+          ? "bg-white/10 text-white shadow-lg" 
+          : "text-white/50 hover:text-white hover:bg-white/5"
+      )}
+    >
+      <div className={cn(
+        "w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0",
+        active ? "bg-accent text-black" : "bg-white/5"
+      )}>
+        {icon}
+      </div>
+      <span className="font-bold text-sm">{label}</span>
+      {active && (
+        <div className="ml-auto w-2 h-2 rounded-full bg-accent" />
+      )}
+    </button>
+  );
+}
+
 function NavButton({ active, onClick, icon, label, theme, t, collapsed }: { active: boolean, onClick: () => void, icon: React.ReactNode, label: string, theme: 'light' | 'dark', t: any, collapsed?: boolean }) {
   return (
     <button 
@@ -1117,17 +1508,17 @@ function NavButton({ active, onClick, icon, label, theme, t, collapsed }: { acti
 function SummaryCard({ title, value, icon, color, theme }: { title: string, value: string, icon: React.ReactNode, color: string, theme: 'light' | 'dark' }) {
   return (
     <div className={cn(
-      "p-8 rounded-[2.5rem] border relative overflow-hidden group transition-all duration-500",
+      "p-4 md:p-8 rounded-2xl md:rounded-[2.5rem] border relative overflow-hidden group transition-all duration-500",
       theme === 'dark' ? "bg-white/5 border-white/5 hover:border-white/10" : "bg-white border-zinc-200 shadow-sm hover:shadow-md"
     )}>
       <div className="relative z-10">
-        <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center mb-6 transition-transform duration-500 group-hover:scale-110", color, "text-white shadow-lg")}>
-          {icon}
+        <div className={cn("w-9 h-9 md:w-12 md:h-12 rounded-lg md:rounded-2xl flex items-center justify-center mb-3 md:mb-6 transition-transform duration-500 group-hover:scale-110", color, "text-white shadow-lg")}>
+          {React.cloneElement(icon as React.ReactElement, { className: "w-4 h-4 md:w-6 md:h-6" })}
         </div>
-        <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">{title}</h3>
-        <div className={cn("text-2xl font-black tracking-tighter", theme === 'dark' ? "text-white" : "text-zinc-900")}>{value}</div>
+        <h3 className="text-zinc-500 text-[9px] md:text-[10px] font-black uppercase tracking-[0.15em] md:tracking-[0.2em] mb-1 md:mb-2">{title}</h3>
+        <div className={cn("text-lg md:text-2xl font-black tracking-tighter", theme === 'dark' ? "text-white" : "text-zinc-900")}>{value}</div>
       </div>
-      <div className={cn("absolute top-0 right-0 w-32 h-32 blur-[60px] -mr-16 -mt-16 opacity-20 transition-opacity duration-1000 group-hover:opacity-40", color)} />
+      <div className={cn("absolute top-0 right-0 w-20 h-20 md:w-32 md:h-32 blur-[30px] md:blur-[60px] -mr-10 -mt-10 md:-mr-16 md:-mt-16 opacity-20 transition-opacity duration-1000 group-hover:opacity-40", color)} />
     </div>
   );
 }
@@ -1137,40 +1528,65 @@ function InventoryRow({ item, onFinish, theme, t }: { item: InventoryItem, onFin
   const progress = Math.max(0, 100 - (daysOld * 10));
 
   return (
-    <div className="p-6 flex items-center justify-between group hover:bg-white/5 transition-all">
-      <div className="flex items-center gap-6 flex-1">
+    <div className="p-3 md:p-6 flex items-center justify-between group hover:bg-white/5 transition-all">
+      <div className="flex items-center gap-2.5 md:gap-6 flex-1 min-w-0">
+        {/* Compact avatar/icon for mobile */}
         <div className={cn(
-          "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border overflow-hidden",
+          "w-9 h-9 md:w-12 md:h-12 rounded-lg md:rounded-2xl flex items-center justify-center shrink-0 border overflow-hidden",
           theme === 'dark' ? "bg-white/5 border-white/10" : "bg-zinc-100 border-zinc-200"
         )}>
           {item.authorPhoto ? (
             <img src={item.authorPhoto} alt={item.authorName} className="w-full h-full object-cover" />
           ) : (
-            <Package className={cn("w-6 h-6", theme === 'dark' ? "text-zinc-500" : "text-zinc-400")} />
+            <Package className={cn("w-4 h-4 md:w-6 md:h-6", theme === 'dark' ? "text-zinc-500" : "text-zinc-400")} />
           )}
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-3 mb-1">
-            <h3 className={cn("font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>{item.name}</h3>
-            <span className="text-[8px] px-2 py-0.5 bg-accent/10 text-accent rounded-full font-black uppercase tracking-tighter border border-accent/20">
-              {item.quantity} {t.inventory.units[item.unit.toLowerCase() as keyof typeof t.inventory.units] || item.unit}
+        
+        <div className="flex-1 min-w-0">
+          {/* Name and quantity inline on mobile */}
+          <div className="flex items-center gap-2 mb-0.5">
+            <h3 className={cn("font-bold md:font-black tracking-tight text-sm md:text-base truncate", theme === 'dark' ? "text-white" : "text-zinc-900")}>{item.name}</h3>
+            <span className="text-[9px] px-1.5 py-0.5 bg-accent/10 text-accent rounded-md font-bold border border-accent/20 shrink-0">
+              {item.quantity} {item.unit.slice(0, 3)}
             </span>
           </div>
-          <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest">
-            {t.inventory.added} {format(parseISO(item.addedDate), 'MMM d')} • {item.cost.toLocaleString()} {t.inventory.birr} • {item.authorName || 'Family'}
-          </p>
+          
+          {/* Compact info row */}
+          <div className="flex items-center gap-2 text-[9px] text-zinc-500">
+            <span>{format(parseISO(item.addedDate), 'MMM d')}</span>
+            <span className="w-0.5 h-0.5 rounded-full bg-zinc-500"></span>
+            <span className="font-mono text-accent">{item.cost.toLocaleString()}</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="hidden sm:inline truncate">{item.authorName || 'Family'}</span>
+          </div>
+          
+          {/* Mobile progress bar */}
+          <div className="md:hidden mt-1.5 w-24">
+            <div className={cn("w-full h-1 rounded-full overflow-hidden", theme === 'dark' ? "bg-white/10" : "bg-zinc-200")}>
+              <motion.div 
+                initial={{ width: 0 }}
+                animate={{ width: `${progress}%` }}
+                className={cn(
+                  "h-full rounded-full",
+                  progress > 50 ? "bg-teal" : progress > 20 ? "bg-accent" : "bg-red-500"
+                )}
+              />
+            </div>
+          </div>
+          
           {item.reminderDate && (
-            <div className="flex items-center gap-1.5 mt-2 text-accent">
-              <Calendar className="w-3 h-3" />
-              <span className="text-[9px] font-black uppercase tracking-widest">
-                {t.inventory.reminder}: {format(parseISO(item.reminderDate), 'MMM d, HH:mm')}
+            <div className="flex items-center gap-1 mt-1 text-accent">
+              <Calendar className="w-2.5 h-2.5" />
+              <span className="text-[8px] font-bold uppercase">
+                {format(parseISO(item.reminderDate), 'MMM d')}
               </span>
             </div>
           )}
         </div>
       </div>
       
-      <div className="flex items-center gap-8">
+      <div className="flex items-center gap-3 md:gap-8 shrink-0">
+        {/* Desktop progress bar */}
         <div className="hidden md:block w-32">
           <div className={cn("w-full h-1.5 rounded-full overflow-hidden", theme === 'dark' ? "bg-white/5" : "bg-zinc-100")}>
             <motion.div 
@@ -1183,14 +1599,16 @@ function InventoryRow({ item, onFinish, theme, t }: { item: InventoryItem, onFin
             />
           </div>
         </div>
+        
+        {/* Finish button */}
         <button 
           onClick={onFinish}
           className={cn(
-            "w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-90 border",
+            "w-8 h-8 md:w-10 md:h-10 rounded-lg md:rounded-xl flex items-center justify-center transition-all active:scale-90 border",
             theme === 'dark' ? "bg-white/5 text-zinc-500 border-white/10 hover:bg-teal hover:text-white hover:border-teal/50" : "bg-zinc-100 text-zinc-400 border-zinc-200 hover:bg-teal hover:text-white hover:border-teal/50"
           )}
         >
-          <Check className="w-5 h-5" />
+          <Check className="w-4 h-4 md:w-5 md:h-5" />
         </button>
       </div>
     </div>
@@ -1695,16 +2113,33 @@ function AddModal({ onClose, onAdd, theme, t }: { onClose: () => void, onAdd: (n
   );
 }
 
-function ManageView({ user, inventory, goal, theme, t }: { user: User | null, inventory: InventoryItem[], goal: Goal | null, theme: 'light' | 'dark', t: any }) {
+function ManageView({ user, inventory, goal, theme, t, activeUsers }: { user: User | null, inventory: InventoryItem[], goal: Goal | null, theme: 'light' | 'dark', t: any, activeUsers: UserProfile[] }) {
   const [isClearing, setIsClearing] = useState(false);
   const finishedItems = inventory.filter(i => i.isFinished);
-  const contributors = Array.from(new Set(inventory.map(i => i.uid)));
+  const activeItems = inventory.filter(i => !i.isFinished);
+  
+  // Calculate user activities
+  const userActivities = activeUsers.map(u => {
+    const userItems = inventory.filter(i => i.uid === u.uid);
+    const userFinished = userItems.filter(i => i.isFinished);
+    const totalSpent = userFinished.reduce((sum, i) => sum + i.cost, 0);
+    const lastActive = userItems.length > 0 
+      ? Math.max(...userItems.map(i => new Date(i.addedDate).getTime()))
+      : Date.now();
+    
+    return {
+      ...u,
+      itemsAdded: userItems.length,
+      itemsFinished: userFinished.length,
+      totalSpent,
+      lastActive: new Date(lastActive)
+    };
+  }).sort((a, b) => b.itemsAdded - a.itemsAdded);
 
   const clearHistory = async () => {
     if (!window.confirm(t.manage.confirmClear.replace('{n}', finishedItems.length.toString()))) return;
     setIsClearing(true);
     try {
-      // In a real app, we would delete these from Firestore
       console.log('Clearing items:', finishedItems);
       alert(t.manage.clearSuccess);
     } catch (error) {
@@ -1714,133 +2149,275 @@ function ManageView({ user, inventory, goal, theme, t }: { user: User | null, in
     }
   };
 
+  const getActivityLevel = (count: number) => {
+    if (count >= 10) return { label: 'Very Active', color: 'bg-emerald-500', glow: 'shadow-emerald-500/30' };
+    if (count >= 5) return { label: 'Active', color: 'bg-accent', glow: 'shadow-accent/30' };
+    return { label: 'New', color: 'bg-blue-500', glow: 'shadow-blue-500/30' };
+  };
+
   return (
     <div className="space-y-8">
-      {/* Firebase Status */}
-      <div className={cn(
-        "p-10 rounded-[3rem] border relative overflow-hidden transition-colors",
-        theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200 shadow-sm"
-      )}>
-        <div className="relative z-10">
-          <div className="flex items-center gap-4 mb-8">
-            <div className="w-14 h-14 bg-teal/10 rounded-2xl flex items-center justify-center border border-teal/20">
-              <Database className="w-7 h-7 text-teal" />
-            </div>
-            <div>
-              <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">{t.manage.dbStatus}</h3>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-teal rounded-full animate-pulse" />
-                <span className={cn("font-bold tracking-tight text-lg", theme === 'dark' ? "text-white" : "text-zinc-900")}>{t.manage.connected}</span>
+      {/* Visual Hierarchy Header */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {[
+          { icon: LayoutDashboard, label: 'Dashboard', value: activeItems.length, color: 'from-accent to-yellow-400', subtext: 'Active Items' },
+          { icon: Check, label: 'Completed', value: finishedItems.length, color: 'from-teal to-emerald-400', subtext: 'Finished Items' },
+          { icon: Users, label: 'Family', value: activeUsers.length, color: 'from-blue-500 to-cyan-400', subtext: 'Members' },
+          { icon: Wallet, label: 'Value', value: `${inventory.reduce((acc, i) => acc + i.cost, 0).toLocaleString()} ETB`, color: 'from-purple-500 to-pink-400', subtext: 'Total Inventory' }
+        ].map((stat, idx) => (
+          <motion.div
+            key={idx}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: idx * 0.1 }}
+            className={cn(
+              "relative overflow-hidden rounded-3xl p-6 border group cursor-pointer transition-all duration-500 hover:-translate-y-1",
+              theme === 'dark' 
+                ? "bg-white/5 border-white/10 hover:border-white/20" 
+                : "bg-white border-zinc-200 hover:border-zinc-300 shadow-sm hover:shadow-xl"
+            )}
+          >
+            <div className={cn("absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br", stat.color)} style={{ opacity: 0.05 }} />
+            <div className="relative z-10">
+              <div className={cn("w-12 h-12 rounded-2xl bg-gradient-to-br flex items-center justify-center mb-4 shadow-lg", stat.color)}>
+                <stat.icon className="w-6 h-6 text-white" />
+              </div>
+              <div className={cn("text-3xl font-black tracking-tight", theme === 'dark' ? "text-white" : "text-zinc-900")}>
+                {stat.value}
+              </div>
+              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mt-1">
+                {stat.subtext}
               </div>
             </div>
-          </div>
-          
-          <div className={cn("space-y-4 pt-8 border-t transition-colors", theme === 'dark' ? "border-white/5" : "border-zinc-100")}>
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500 text-xs font-medium">{t.manage.projectId}</span>
-              <span className={cn("font-mono text-xs", theme === 'dark' ? "text-zinc-300" : "text-zinc-600")}>net-inventory-9b10d</span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-zinc-500 text-xs font-medium">{t.manage.region}</span>
-              <span className={cn("font-mono text-xs", theme === 'dark' ? "text-zinc-300" : "text-zinc-600")}>Default (us-central1)</span>
-            </div>
-          </div>
+          </motion.div>
+        ))}
+      </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* User Activities Sidebar - Takes 2 columns */}
+        <div className="lg:col-span-2 space-y-6">
           <div className={cn(
-            "mt-10 p-6 border rounded-[2rem] transition-colors",
-            theme === 'dark' ? "bg-accent/5 border-accent/10" : "bg-accent/5 border-accent/20"
+            "rounded-[2.5rem] border overflow-hidden transition-all",
+            theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200 shadow-sm"
           )}>
-            <h4 className="text-accent text-[10px] font-black uppercase tracking-widest mb-3 flex items-center gap-2">
-              <Shield className="w-4 h-4" />
-              {t.manage.troubleshoot}
-            </h4>
-            <p className={cn("text-xs leading-relaxed mb-4", theme === 'dark' ? "text-zinc-400" : "text-zinc-600")}>
-              {t.manage.troubleshootDesc}
-            </p>
-            <div className={cn("p-4 rounded-xl border font-mono text-[10px] break-all transition-colors", theme === 'dark' ? "bg-black/20 border-white/5 text-zinc-300" : "bg-white border-zinc-200 text-zinc-700")}>
-              ais-dev-5x4ijz4nup4sfqmvcv4j74-703267428407.europe-west2.run.app
-            </div>
-            <p className="text-zinc-500 text-[10px] mt-4 italic">
-              {t.manage.findIn}
-            </p>
-          </div>
-        </div>
-        <div className="absolute top-0 right-0 w-80 h-80 bg-teal/5 blur-[120px] -mr-40 -mt-40" />
-      </div>
-
-      {/* User Info */}
-      <div className={cn(
-        "p-10 rounded-[3rem] border transition-colors",
-        theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200 shadow-sm"
-      )}>
-        <div className="flex items-center gap-4 mb-10">
-          <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center border border-accent/20">
-            <Shield className="w-7 h-7 text-accent" />
-          </div>
-          <div>
-            <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-1">{t.manage.securityProfile}</h3>
-            <span className={cn("font-bold tracking-tight text-lg", theme === 'dark' ? "text-white" : "text-zinc-900")}>
-              {user?.isAnonymous ? t.manage.guest : t.manage.admin}
-            </span>
-          </div>
-        </div>
-        
-        <div className="space-y-4">
-          <div className={cn("p-6 rounded-2xl border transition-colors", theme === 'dark' ? "bg-white/5 border-white/5" : "bg-zinc-50 border-zinc-100")}>
-            <div className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-2">{t.manage.uniqueId}</div>
-            <div className={cn("font-mono text-xs break-all", theme === 'dark' ? "text-zinc-300" : "text-zinc-600")}>{user?.uid}</div>
-          </div>
-          {!user?.isAnonymous && (
-            <div className={cn("p-6 rounded-2xl border transition-colors", theme === 'dark' ? "bg-white/5 border-white/5" : "bg-zinc-50 border-zinc-100")}>
-              <div className="text-[10px] text-zinc-500 font-black uppercase tracking-widest mb-2">{t.manage.email}</div>
-              <div className={cn("font-mono text-xs", theme === 'dark' ? "text-zinc-300" : "text-zinc-600")}>{user?.email}</div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Family Management */}
-      <div className={cn(
-        "p-10 rounded-[3rem] border transition-colors",
-        theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200 shadow-sm"
-      )}>
-        <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-8">{t.manage.contributors}</h3>
-        <div className="space-y-4">
-          {contributors.map((uid, idx) => (
-            <div key={idx} className={cn(
-              "flex items-center justify-between p-6 rounded-2xl border group transition-all",
-              theme === 'dark' ? "bg-white/5 border-white/5 hover:border-white/20" : "bg-zinc-50 border-zinc-100 hover:border-zinc-200"
-            )}>
-              <div className="flex items-center gap-4">
-                <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-xs font-black transition-colors", theme === 'dark' ? "bg-zinc-800 text-zinc-500" : "bg-zinc-200 text-zinc-600")}>
-                  {idx + 1}
+            <div className="p-8 border-b border-white/5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-gradient-to-br from-accent to-yellow-400 rounded-2xl flex items-center justify-center shadow-lg shadow-accent/20">
+                    <Users className="w-7 h-7 text-black" />
+                  </div>
+                  <div>
+                    <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Team Activity</h3>
+                    <p className={cn("font-bold text-xl", theme === 'dark' ? "text-white" : "text-zinc-900")}>Family Members</p>
+                  </div>
                 </div>
-                <span className={cn("font-mono text-sm transition-colors", theme === 'dark' ? "text-zinc-300" : "text-zinc-700")}>{t.manage.member} {uid?.slice(0, 8)}...</span>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase">{activeUsers.length} Online</span>
+                </div>
               </div>
-              {uid === user?.uid && (
-                <span className="px-3 py-1 bg-accent/10 text-accent text-[10px] font-black uppercase rounded-lg border border-accent/20">{t.manage.you}</span>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {userActivities.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="w-16 h-16 text-zinc-600 mx-auto mb-4" />
+                  <p className="text-zinc-500">No family members yet</p>
+                </div>
+              ) : (
+                userActivities.map((member, idx) => {
+                  const activity = getActivityLevel(member.itemsAdded);
+                  return (
+                    <motion.div
+                      key={member.uid}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.1 }}
+                      className={cn(
+                        "group relative overflow-hidden rounded-2xl p-6 border transition-all duration-300 hover:scale-[1.02]",
+                        theme === 'dark' 
+                          ? "bg-white/5 border-white/5 hover:border-white/20" 
+                          : "bg-zinc-50 border-zinc-100 hover:border-zinc-200"
+                      )}
+                    >
+                      {/* Shimmer effect */}
+                      <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 bg-gradient-to-r from-transparent via-white/5 to-transparent" />
+                      
+                      <div className="relative flex items-center gap-4">
+                        {/* Avatar */}
+                        <div className="relative">
+                          <div className="w-16 h-16 rounded-2xl overflow-hidden border-2 border-accent/30 p-0.5">
+                            <img 
+                              src={member.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${member.uid}&gender=${member.gender || 'male'}`}
+                              alt={member.displayName}
+                              className="w-full h-full rounded-xl object-cover"
+                            />
+                          </div>
+                          <div className={cn("absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2", activity.color, theme === 'dark' ? 'border-[#1E292B]' : 'border-white')} />
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className={cn("font-bold text-lg truncate", theme === 'dark' ? "text-white" : "text-zinc-900")}>
+                              {member.displayName}
+                            </h4>
+                            {member.uid === user?.uid && (
+                              <span className="px-2 py-0.5 bg-accent/20 text-accent text-[9px] font-black uppercase rounded-full">You</span>
+                            )}
+                          </div>
+                          <p className="text-zinc-500 text-xs mb-2">{member.email || member.familyCode}</p>
+                          
+                          {/* Activity Stats */}
+                          <div className="flex items-center gap-4 text-[10px]">
+                            <span className="text-zinc-400">
+                              <span className="text-accent font-bold">{member.itemsAdded}</span> items added
+                            </span>
+                            <span className="text-zinc-400">
+                              <span className="text-teal font-bold">{member.itemsFinished}</span> completed
+                            </span>
+                            <span className="text-zinc-400">
+                              <span className="text-emerald-400 font-bold">{member.totalSpent.toLocaleString()}</span> ETB spent
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Activity Badge */}
+                        <div className={cn("px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg", activity.color, activity.glow, "text-white")}>
+                          {activity.label}
+                        </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="mt-4">
+                        <div className={cn("h-1.5 rounded-full overflow-hidden", theme === 'dark' ? 'bg-white/10' : 'bg-zinc-200')}>
+                          <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(100, (member.itemsAdded / Math.max(...userActivities.map(u => u.itemsAdded))) * 100)}%` }}
+                            transition={{ duration: 1, delay: 0.5 }}
+                            className={cn("h-full rounded-full bg-gradient-to-r", activity.color.replace('bg-', 'from-').replace('500', '400'), activity.color.replace('bg-', 'to-'))}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  );
+                })
               )}
             </div>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      {/* Data Maintenance */}
-      <div className={cn(
-        "p-10 rounded-[3rem] border transition-colors",
-        theme === 'dark' ? "bg-red-500/5 border-red-500/10" : "bg-red-50 border-red-100"
-      )}>
-        <h3 className="text-red-500 text-[10px] font-black uppercase tracking-widest mb-2">{t.manage.dangerZone}</h3>
-        <p className="text-zinc-500 text-xs mb-8">{t.manage.dangerDesc}</p>
-        
-        <button 
-          onClick={clearHistory}
-          disabled={isClearing || finishedItems.length === 0}
-          className="w-full py-5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-red-50 hover:text-red-600 transition-all active:scale-95 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Trash2 className="w-5 h-5" />
-          {t.manage.clearBtn.replace('{n}', finishedItems.length.toString())}
-        </button>
+          {/* Recent Activity Timeline */}
+          <div className={cn(
+            "rounded-[2.5rem] border p-8 transition-all",
+            theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200 shadow-sm"
+          )}>
+            <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-6">Recent Activity</h3>
+            <div className="space-y-4">
+              {inventory.slice(0, 5).map((item, idx) => (
+                <motion.div
+                  key={item.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/5"
+                >
+                  <div className={cn(
+                    "w-10 h-10 rounded-xl flex items-center justify-center",
+                    item.isFinished ? "bg-teal/20 text-teal" : "bg-accent/20 text-accent"
+                  )}>
+                    {item.isFinished ? <Check className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+                  </div>
+                  <div className="flex-1">
+                    <p className={cn("font-bold text-sm", theme === 'dark' ? "text-white" : "text-zinc-900")}>{item.name}</p>
+                    <p className="text-zinc-500 text-xs">{item.authorName} • {format(parseISO(item.addedDate), 'MMM d, HH:mm')}</p>
+                  </div>
+                  <span className="text-accent font-mono font-bold">{item.cost.toLocaleString()} ETB</span>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Sidebar - System Status */}
+        <div className="space-y-6">
+          {/* System Status Card */}
+          <div className={cn(
+            "rounded-[2.5rem] border p-8 relative overflow-hidden transition-all",
+            theme === 'dark' ? "bg-gradient-to-br from-teal/10 to-transparent border-teal/20" : "bg-gradient-to-br from-teal/5 to-transparent border-teal/10"
+          )}>
+            <div className="relative z-10">
+              <div className="w-14 h-14 bg-teal/20 rounded-2xl flex items-center justify-center border border-teal/30 mb-6">
+                <Database className="w-7 h-7 text-teal" />
+              </div>
+              <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-2">System Status</h3>
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                <span className={cn("font-bold text-xl", theme === 'dark' ? "text-white" : "text-zinc-900")}>Connected</span>
+              </div>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Database</span>
+                  <span className="text-emerald-400 font-bold">Online</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Storage</span>
+                  <span className="text-emerald-400 font-bold">Active</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-500">Auth</span>
+                  <span className="text-emerald-400 font-bold">Secure</span>
+                </div>
+              </div>
+            </div>
+            <div className="absolute top-0 right-0 w-40 h-40 bg-teal/10 blur-[80px]" />
+          </div>
+
+          {/* User Profile Card */}
+          <div className={cn(
+            "rounded-[2.5rem] border p-8 transition-all",
+            theme === 'dark' ? "bg-white/5 border-white/10" : "bg-white border-zinc-200"
+          )}>
+            <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-widest mb-6">Your Profile</h3>
+            <div className="text-center">
+              <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-accent/30 mx-auto mb-4 p-1">
+                <img 
+                  src={user?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.uid}`}
+                  alt="Profile"
+                  className="w-full h-full rounded-full object-cover"
+                />
+              </div>
+              <h4 className={cn("font-bold text-lg", theme === 'dark' ? "text-white" : "text-zinc-900")}>{user?.displayName || 'User'}</h4>
+              <p className="text-zinc-500 text-xs mb-4">{user?.email}</p>
+              <div className="flex justify-center gap-4 text-[10px]">
+                <div className="text-center">
+                  <div className="text-accent font-bold text-lg">{activeItems.filter(i => i.uid === user?.uid).length}</div>
+                  <div className="text-zinc-500">Active</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-teal font-bold text-lg">{finishedItems.filter(i => i.uid === user?.uid).length}</div>
+                  <div className="text-zinc-500">Done</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className={cn(
+            "rounded-[2.5rem] border p-8 transition-all",
+            theme === 'dark' ? "bg-red-500/5 border-red-500/10" : "bg-red-50 border-red-100"
+          )}>
+            <h3 className="text-red-500 text-[10px] font-black uppercase tracking-widest mb-2">Danger Zone</h3>
+            <p className="text-zinc-500 text-xs mb-6">{t.manage.dangerDesc}</p>
+            <button 
+              onClick={clearHistory}
+              disabled={isClearing || finishedItems.length === 0}
+              className="w-full py-4 bg-red-500/10 text-red-500 border border-red-500/20 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-red-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Trash2 className="w-4 h-4" />
+              Clear {finishedItems.length} Items
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
